@@ -1,0 +1,15 @@
+{
+  "name": "vuln-node-api",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "express": "4.16.1",
+    "ejs": "2.5.5",
+    "lodash": "4.17.15",
+    "minimist": "0.0.8",
+    "sqlite3": "4.0.0"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
