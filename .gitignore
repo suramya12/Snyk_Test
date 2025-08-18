@@ -1,0 +1,12 @@
+# Node
+node-api/node_modules
+
+# Python
+python-service/.venv
+__pycache__/
+
+# Java
+java-app/target
+
+# Docker
+*.log

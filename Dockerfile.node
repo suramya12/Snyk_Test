@@ -1,0 +1,11 @@
+# Intentionally outdated base image for container scanning
+FROM node:10
+
+WORKDIR /app
+COPY node-api/package.json node-api/package-lock.json* ./
+RUN npm install --unsafe-perm
+COPY node-api/ .
+
+# No USER directive (runs as root)
+EXPOSE 3000
+CMD ["node", "server.js"]
