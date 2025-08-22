@@ -5,8 +5,8 @@
   "dependencies": {
     "express": "4.16.1",
     "ejs": "2.5.5",
-    "lodash": "4.17.21",
-    "minimist": "0.0.8",
+    "lodash": "4.17.15",
+    "minimist": "0.2.4",
     "sqlite3": "4.0.0"
   },
   "scripts": {
