@@ -1,5 +1,5 @@
 # Intentionally outdated base image for container scanning
-FROM node:10
+FROM node:16
 
 WORKDIR /app
 COPY node-api/package.json node-api/package-lock.json* ./
