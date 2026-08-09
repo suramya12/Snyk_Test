@@ -10,3 +10,6 @@ java-app/target
 
 # Docker
 *.log
+
+# Build artifacts
+snyk-skill.zip
