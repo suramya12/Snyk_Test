@@ -2,6 +2,7 @@
 One-shot Snyk preflight + scan (Windows).
 Usage:
   powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan all
+  powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan all -Org <org-id>
   powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan iac -Target iac/
   powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan container -Image node:18-alpine
 Exit codes: 0 = clean, 1 = issues found (scan SUCCEEDED), 2 = setup/scan error
@@ -10,6 +11,7 @@ param(
     [Parameter(Mandatory = $true)][ValidateSet('all', 'sca', 'code', 'iac', 'container')][string]$Scan,
     [string]$Target = '.',
     [string]$Image = '',
+    [string]$Org = '',
     [ValidateSet('', 'low', 'medium', 'high', 'critical')][string]$SeverityThreshold = ''
 )
 $ErrorActionPreference = 'Continue'
@@ -57,6 +59,20 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 Write-Output 'Authenticated.'
+
+# --- 3b. Org selection (SNYK_CFG_ORG is honored by every snyk command) ---
+if ($Org) {
+    $env:SNYK_CFG_ORG = $Org
+    Write-Output "Using Snyk org: $Org"
+}
+elseif ($env:SNYK_CFG_ORG) {
+    Write-Output "Using Snyk org from environment: $($env:SNYK_CFG_ORG)"
+}
+else {
+    $cfgOrg = (& snyk config get org 2>$null)
+    if ($cfgOrg) { Write-Output "Using Snyk org from CLI config: $cfgOrg" }
+    else { Write-Output 'No org specified - using your account''s default org. Pass -Org <org-id> if scans fail with authorization errors.' }
+}
 
 # --- 4. Run scans (spinner/progress noise stripped to keep output compact) ---
 function Invoke-Scan([string]$name, [string[]]$snykArgs) {

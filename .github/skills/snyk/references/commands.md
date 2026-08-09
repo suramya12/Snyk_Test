@@ -104,6 +104,21 @@ snyk config set org=<org-id>      # set default org
 
 Environment variables: `SNYK_TOKEN` (auth), `SNYK_CFG_ORG` (org override).
 
+## Org selection
+
+Developers are often members of an org rather than admins; scans may fail or land in the wrong
+org without an explicit org ID.
+
+```
+snyk config get org                   # check configured default
+snyk test --all-projects --org=<id>   # per-command override (works on all test commands)
+snyk config set org=<id>              # persist for all future runs (ask user before persisting)
+```
+
+The org ID is a UUID found at https://app.snyk.io → org Settings → Organization ID.
+The one-shot scripts accept it via `-Org <id>` (ps1) / 5th positional arg (sh) and export
+`SNYK_CFG_ORG`, which every snyk command honors.
+
 ## Troubleshooting (exit code 2)
 
 | Error text contains | Cause | Action |
@@ -114,3 +129,23 @@ Environment variables: `SNYK_TOKEN` (auth), `SNYK_CFG_ORG` (org override).
 | `mvn command not found` / build errors | Ecosystem toolchain missing | Report skipped project; suggest installing the tool |
 | `Snyk Code is not supported` | Snyk Code disabled on org | User enables it in org settings |
 | Proxy/network errors | Corporate proxy | Set `HTTPS_PROXY` env var |
+
+## Project-side scan failures — explain in plain English
+
+When a scan fails because of the DEVELOPER'S project (not Snyk), match the error below and
+reply with the 2–3 line pattern: what failed → why → exact fix. Never just paste the raw error.
+
+| Error text contains | What it means (tell the dev) | Fix to give them |
+|---|---|---|
+| `Missing required packages` / `Required packages missing` (pip) | Snyk resolves Python deps from installed packages; they aren't installed | `pip install -r requirements.txt` (in a venv), then re-scan. If using python3 explicitly: add `--command=python3` |
+| `mvn command not found` | Maven isn't installed/on PATH, so the Java project can't be resolved | Install Maven (or use the project's `mvnw`), verify `mvn -v`, re-scan |
+| Maven `Cannot resolve dependencies` / `BUILD FAILURE` | The pom doesn't build — Snyk needs a resolvable build | Run `mvn dependency:tree` to see the real error (bad version, missing repo credential), fix the pom, re-scan |
+| `out of sync` / `lockfile` errors (npm/yarn/pnpm) | package.json and the lockfile disagree | Run `npm install` (or `yarn` / `pnpm install`) to regenerate the lockfile, re-scan |
+| npm `401`/`403` during resolution | Private registry needs auth | Configure `.npmrc` with the registry token (their team's standard setup), re-scan |
+| Gradle `Could not resolve` / daemon errors | Gradle build not resolvable | Run `./gradlew dependencies` to surface the real failure, fix, re-scan |
+| `Failed to get dependencies` (generic) | The manifest exists but the ecosystem tooling couldn't produce a dependency graph | Build the project once locally with its normal tool; whatever error appears there is the actual blocker |
+| `1/N potential projects failed to get dependencies` | Partial failure — the OTHER projects scanned fine | Report the successful results; explain the failed project separately using this table |
+
+Rule of thumb: Snyk SCA needs the project to be *buildable/resolvable* with its native package
+manager. If the native tool (`npm install`, `mvn compile`, `pip install -r`) fails, Snyk fails too
+— fixing the native build fixes the scan.

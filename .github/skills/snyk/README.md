@@ -2,20 +2,24 @@
 
 A self-contained agent skill that gives GitHub Copilot / any agent full Snyk capability using
 only the Snyk CLI. Replaces the Snyk MCP server in environments where MCP servers are not
-allowed. Covers: SCA (dependencies), Code (SAST), IaC, Container, SBOM, AI-BOM, monitoring —
-plus guided remediation (fix → rescan → verify).
+allowed. Covers: SCA (dependencies), Code (SAST), secrets (via Snyk Code), IaC, Container,
+SBOM, AI-BOM, monitoring — plus guided remediation (fix → rescan → verify) and plain-English
+explanations when a scan fails because of the project (missing deps, broken build).
 
 ## Install (pick one)
 
-Unzip this `snyk` folder into one of:
+Unzip so you get a `snyk` folder in one of:
 
 | Location | Scope |
 |---|---|
 | `<repo>/.github/skills/snyk/` | This repository (recommended for teams) |
+| `<repo>/.claude/skills/snyk/` | This repository (Claude Code) |
 | `~/.copilot/skills/snyk/` | Personal — all repositories |
 
 No other setup. The skill installs/updates the Snyk CLI itself (Node.js/npm needed for
-auto-install) and walks you through browser login on first use.
+auto-install) and walks you through browser login on first use. If your Snyk account belongs
+to multiple orgs, have your Organization ID handy (app.snyk.io → org Settings) — the agent
+will ask for it only if a scan needs it.
 
 ## Requirements
 
@@ -27,8 +31,10 @@ auto-install) and walks you through browser login on first use.
 
 - `/snyk scan the workspace` (or plain: "run a security scan on this project")
 - "Run SCA and code scans"
+- "Run a secret scan"
 - "IaC scan the terraform folder"
 - "Container scan node:18-alpine"
+- "Is upgrading express to v5 safe?" (breakability assessment)
 - "Fix the vulnerabilities you found"
 
 ## What's inside
@@ -50,4 +56,5 @@ snyk/
 
 - Scan results count against your Snyk org's monthly test limits (same as MCP).
 - Exit code 1 from a scan means "issues found", not failure — the scripts label this clearly.
+- Multi-org accounts: pass your org ID once and the agent can persist it (`snyk config set org=<id>`).
 - The agent never modifies your code without asking first.

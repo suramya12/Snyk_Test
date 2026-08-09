@@ -40,8 +40,16 @@ bash "<skill-folder>/scripts/snyk-scan.sh" all
 
 Scan values: `all` | `sca` | `code` | `iac` | `container`.
 If the user just says "scan", use `all`. Optional args: `-Target <path>` (code/iac scope),
-`-Image <image:tag>` (required for container), `-SeverityThreshold high`.
+`-Image <image:tag>` (required for container), `-Org <org-id>`, `-SeverityThreshold high`.
+For the .sh script the positional order is: `<scan> [target] [image] [severity] [org-id]`.
 Run the script from the **workspace root** so scans cover the whole project.
+
+**Org ID (right after auth):**
+- If the user provided an org ID (or one is set in their environment/CLI config), always pass it: `-Org <org-id>`.
+- If no org is known, run without it — the CLI uses the account's default org.
+- If a scan then fails with 401/403/"not provisioned"/"org" errors, ASK the user for their org ID
+  (visible at https://app.snyk.io → org Settings → Organization ID) and re-run with `-Org <org-id>`.
+- Once a working org ID is known, offer to persist it so it's never needed again: `snyk config set org=<org-id>`.
 
 The script automatically: installs the CLI via npm if missing → updates to latest → checks auth
 (if a browser opens, tell the user to complete the login; the script waits) → runs the scans
@@ -50,6 +58,15 @@ with progress-spinner noise stripped → prints one `RESULT:` line per scan.
 **Exit codes — critical:** `0` = clean, `1` = **issues found, scan SUCCEEDED** (summarize the
 findings — this is not an error), `2` = setup/scan error (read the ERROR lines; troubleshooting
 table in [references/commands.md](./references/commands.md)).
+
+**When a scan fails or a project is skipped — never relay the raw error.** Diagnose it with the
+failure table in [references/commands.md](./references/commands.md) and give the developer 2–3
+plain lines: (1) what failed, (2) why — in terms of THEIR project (missing deps, broken build,
+out-of-sync lockfile), (3) the exact command or change that fixes it. Example:
+
+> SCA couldn't analyze `python-service` — Snyk resolves exact dependency versions from the
+> installed packages, and they aren't installed here.
+> Fix: `pip install -r python-service/requirements.txt`, then re-run the scan.
 
 **Fallback** — only if the script cannot run (execution policy blocked, no shell): run the manual
 sequence from [references/commands.md](./references/commands.md): `snyk --version` →
@@ -87,9 +104,10 @@ The CLI has no standalone secrets command; Snyk Code performs the secrets detect
    `Hardcoded Passwords`, `Hardcoded Secret`, `Hardcoded Non-Cryptographic Secret`, or `Cleartext`.
 3. Report them under the heading **"Secret Scan Results (via Snyk Code secrets detection)"** —
    never present the full SAST result set as a "secret scan".
-4. State the coverage caveat: source/config files in the working tree only — git history, `.env`
-   files excluded from the scan, and binary files are NOT covered. If the user needs git-history
-   secret detection, recommend a dedicated tool (e.g. gitleaks) — do not attempt it with snyk.
+4. State the coverage caveat: it scans source/config files in the working tree only — git
+   history, ignored files (e.g. `.env` in `.gitignore`), and binaries are NOT covered. If the
+   user needs git-history secret detection, recommend a dedicated tool (e.g. gitleaks) — do not
+   attempt it with snyk.
 
 ## Step 3 — Report results (structured)
 

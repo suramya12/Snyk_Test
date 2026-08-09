@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # One-shot Snyk preflight + scan (macOS/Linux).
-# Usage: snyk-scan.sh <all|sca|code|iac|container> [target-path] [image:tag] [severity]
+# Usage: snyk-scan.sh <all|sca|code|iac|container> [target-path] [image:tag] [severity] [org-id]
 # Exit codes: 0 = clean, 1 = issues found (scan SUCCEEDED), 2 = setup/scan error
 set -u
-SCAN="${1:-all}"; TARGET="${2:-.}"; IMAGE="${3:-}"; SEV="${4:-}"
+SCAN="${1:-all}"; TARGET="${2:-.}"; IMAGE="${3:-}"; SEV="${4:-}"; ORG="${5:-}"
 FINDINGS=0
 SEV_ARG=""
 [ -n "$SEV" ] && SEV_ARG="--severity-threshold=$SEV"
@@ -46,6 +46,18 @@ if ! snyk whoami --experimental >/dev/null 2>&1; then
     fi
 fi
 echo "Authenticated."
+
+# --- 3b. Org selection (SNYK_CFG_ORG is honored by every snyk command) ---
+if [ -n "$ORG" ]; then
+    export SNYK_CFG_ORG="$ORG"
+    echo "Using Snyk org: $ORG"
+elif [ -n "${SNYK_CFG_ORG:-}" ]; then
+    echo "Using Snyk org from environment: $SNYK_CFG_ORG"
+else
+    CFG_ORG="$(snyk config get org 2>/dev/null || true)"
+    if [ -n "$CFG_ORG" ]; then echo "Using Snyk org from CLI config: $CFG_ORG"
+    else echo "No org specified - using your account's default org. Pass an org-id (5th argument) if scans fail with authorization errors."; fi
+fi
 
 # --- 4. Run scans (spinner/progress noise stripped to keep output compact) ---
 run_scan() {
