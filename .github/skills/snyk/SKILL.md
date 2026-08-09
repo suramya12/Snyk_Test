@@ -60,7 +60,8 @@ exist in the repo, surface a container scan in Recommended Next Actions.
 
 **Exit codes — critical:** `0` = clean, `1` = **issues found, scan SUCCEEDED** (summarize the
 findings — this is not an error), `2` = setup/scan error (read the ERROR lines; troubleshooting
-table in [references/commands.md](./references/commands.md)).
+table in [references/commands.md](./references/commands.md)), `3` = no supported manifests found
+(verify the working directory and `-Target` path).
 
 **When a scan fails or a project is skipped — never relay the raw error.** Diagnose it with the
 failure table in [references/commands.md](./references/commands.md) and give the developer 2–3
@@ -86,6 +87,7 @@ Match the request to EXACTLY ONE row and do what the row says — nothing else.
 | `snyk_code_scan` / SAST | Step 1 script with `-Scan code` |
 | `snyk_iac_scan` / Terraform/K8s config | Step 1 script with `-Scan iac -Target <path>` |
 | `snyk_container_scan` / Docker image | Step 1 script with `-Scan container -Image <image:tag>` |
+| "scan Dockerfile.X" / container scan of a Dockerfile | Step 1 script with `-Scan container -Dockerfile <path>` — the script extracts the FROM image and adds `--file=` for base-image remediation advice. NEVER run `snyk container test --file=...` without an image argument — a Dockerfile alone cannot be scanned |
 | `snyk_secret_scan` / secret scan | **Special procedure — see "Secret scan" below. Do NOT run `snyk secret scan` (not a real command).** |
 | `snyk_sbom_scan` / test an SBOM | `snyk sbom test --experimental --file=<sbom-file>` |
 | Generate SBOM | `snyk sbom --format cyclonedx1.5+json --json-file-output=sbom.json` |
@@ -103,14 +105,19 @@ Match the request to EXACTLY ONE row and do what the row says — nothing else.
 The CLI has no standalone secrets command; Snyk Code performs the secrets detection. Use SARIF
 output so the filtering is deterministic (rule IDs are stable; display titles are not):
 
-1. Run: `snyk code test <target> --sarif-file-output=.snyk-code.sarif`
-   (reuse a `.snyk-code.sarif` already produced in this conversation if one exists).
+1. Run: `snyk code test <target> --sarif-file-output=<temp-dir>\snyk-code.sarif`
+   Write the SARIF to the system temp dir ($env:TEMP / ${TMPDIR:-/tmp}), NOT the repo — the
+   file contains code snippets around each finding and must never be committed. Reuse a SARIF
+   already produced in this conversation if one exists.
 2. Extract secret findings with ONE filtered command — never read or print the whole file:
-   - PowerShell: `(Get-Content .snyk-code.sarif -Raw | ConvertFrom-Json).runs[0].results | Where-Object { $_.ruleId -match 'Hardcoded|Cleartext' } | ForEach-Object { "$($_.level) $($_.ruleId) $($_.locations[0].physicalLocation.artifactLocation.uri):$($_.locations[0].physicalLocation.region.startLine)" }`
-   - bash (jq): `jq -r '.runs[0].results[] | select(.ruleId|test("Hardcoded|Cleartext")) | "\(.level) \(.ruleId) \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' .snyk-code.sarif`
+   - PowerShell: `(Get-Content <sarif> -Raw | ConvertFrom-Json).runs[0].results | Where-Object { $_.ruleId -match 'Hardcoded|Cleartext' } | ForEach-Object { "$($_.level) $($_.ruleId) $($_.locations[0].physicalLocation.artifactLocation.uri):$($_.locations[0].physicalLocation.region.startLine)" }`
+   - bash (jq): `jq -r '.runs[0].results[] | select(.ruleId|test("Hardcoded|Cleartext")) | "\(.level) \(.ruleId) \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' <sarif>`
+   - bash without jq (grep/sed fallback): `grep -o '"ruleId":"[^"]*"' <sarif> | grep -iE 'Hardcoded|Cleartext' | sort -u`
+     (rule IDs only — report them plus the total count; for file:line detail use a targeted grep
+     around each matched ruleId, still never dumping the whole file.)
 3. Report under the heading **"Secret Scan Results (via Snyk Code secrets detection)"** —
    never present the full SAST result set as a "secret scan".
-4. Delete `.snyk-code.sarif` afterwards; never commit it.
+4. Delete the SARIF file afterwards.
 5. State the coverage caveat: working tree only — git history, ignored files (e.g. `.env` in
    `.gitignore`), and binaries are NOT covered (the MCP secret scan has the same limits). For
    git-history secrets recommend a dedicated tool (e.g. gitleaks) — do not attempt it with snyk.
@@ -125,9 +132,12 @@ Assess "will upgrading <pkg> from A to B break my app" with evidence, step by st
    page) and read the release notes between A and B; list changed/removed APIs.
 3. **Workspace impact** — search this repo for each changed/removed API. Zero usages →
    downgrade the risk one level; cite the searches as evidence.
-4. **Dry run (only with user approval)** — apply the upgrade on a scratch branch, run the
-   project's build and tests. Green = Low residual risk; failures = the concrete break list.
-   Revert the scratch changes afterwards.
+4. **Dry run (only with user approval)** — never modify the user's working tree. Use an
+   isolated git worktree: `git worktree add <temp-dir>\snyk-break HEAD` → apply the upgrade
+   THERE → run the project's build and tests → report the result → ALWAYS clean up, even on
+   failure: `git worktree remove --force <temp-dir>\snyk-break` (wrap cleanup so a failed build
+   cannot skip it). Green = Low residual risk; failures = the concrete break list.
+   If the project is not a git repo: copy the project dir to temp and work there instead.
 5. **Verdict** — Low/Medium/High with one line of evidence per step.
 
 ## Step 3 — Report results (structured)

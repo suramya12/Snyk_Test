@@ -50,16 +50,23 @@ Supports Terraform, CloudFormation, Kubernetes YAML, ARM templates, Terraform pl
 ## Container — `snyk container test`
 
 ```
-snyk container test <image:tag>                          # e.g. node:18-alpine
+snyk container test <image:tag>                          # e.g. node:18-alpine (no local Docker needed for public registry images — the CLI pulls metadata itself)
 snyk container test <image:tag> --file=Dockerfile.node   # include Dockerfile for base-image advice
 snyk container test <image:tag> --exclude-app-vulns      # OS-level only
 snyk container monitor <image:tag>                       # continuous monitoring
 ```
 
-- The image must exist locally (`docker images`) or be pullable. If Docker isn't running,
-  report that and skip.
-- A Dockerfile alone cannot be scanned; an image reference is required. If the user points at a
-  Dockerfile, extract the base image from its `FROM` line and scan that with `--file=<Dockerfile>`.
+- **CRITICAL: an image:tag argument is mandatory.** `snyk container test --file=Dockerfile.node`
+  (no image) is an error — a Dockerfile alone cannot be scanned. When the user points at a
+  Dockerfile, extract the base image from its `FROM` line and scan THAT with `--file=<Dockerfile>`
+  appended (the one-shot scripts do this automatically: `-Dockerfile <path>` on ps1, 6th
+  positional arg on sh). The `--file` flag also unlocks Snyk's base-image remediation advice
+  ("upgrade base image to X").
+- Public registry images need no local Docker — the CLI scans them remotely. A local/private
+  image requires a running Docker daemon (`docker images` to confirm). If Docker isn't running
+  AND the image isn't public, report that and skip.
+- Container scans produce large outputs (a full OS package list — often 100+ findings). In the
+  report, summarize by severity and list only Critical/High detail; never dump the full list.
 
 ## Monitor — `snyk monitor`
 

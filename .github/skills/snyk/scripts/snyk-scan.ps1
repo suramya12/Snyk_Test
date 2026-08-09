@@ -5,12 +5,15 @@ Usage:
   powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan all -Org <org-id>
   powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan iac -Target iac/
   powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan container -Image node:18-alpine
+  powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan container -Dockerfile Dockerfile.node
+    (extracts the base image from the FROM line and scans it WITH base-image remediation advice)
 Exit codes: 0 = clean, 1 = issues found (scan SUCCEEDED), 2 = setup/scan error
 #>
 param(
     [Parameter(Mandatory = $true)][ValidateSet('all', 'sca', 'code', 'iac', 'container')][string]$Scan,
     [string]$Target = '.',
     [string]$Image = '',
+    [string]$Dockerfile = '',
     [string]$Org = '',
     [ValidateSet('', 'low', 'medium', 'high', 'critical')][string]$SeverityThreshold = ''
 )
@@ -94,6 +97,22 @@ function Invoke-Scan([string]$name, [string[]]$snykArgs) {
     }
 }
 
+# Container-only runs skip SCA/Code/IaC entirely (mirrors the .sh script's behavior).
+if ($Scan -eq 'container') {
+    if (-not $Image -and $Dockerfile) {
+        if (-not (Test-Path $Dockerfile)) { Write-Output "ERROR: Dockerfile not found: $Dockerfile"; exit 2 }
+        # Last FROM = final stage = the shipped image (multi-stage builds)
+        $m = Select-String -Path $Dockerfile -Pattern '^\s*FROM\s+([^\s]+)' | Select-Object -Last 1
+        if ($m) { $Image = $m.Matches[0].Groups[1].Value; Write-Output "Extracted base image from ${Dockerfile}: $Image" }
+        else { Write-Output "ERROR: no FROM line found in $Dockerfile. Pass -Image <image:tag> instead."; exit 2 }
+    }
+    if (-not $Image) { Write-Output 'ERROR: container scan requires -Image <image:tag> or -Dockerfile <path>'; exit 2 }
+    $cArgs = @('container', 'test', $Image) + $sevArgs
+    if ($Dockerfile) { $cArgs += @('--file=' + $Dockerfile) }
+    Invoke-Scan 'Container' $cArgs
+    if ($script:Findings) { exit 1 } else { exit 0 }
+}
+
 if ($Scan -in @('sca', 'all')) {
     Invoke-Scan 'SCA (dependencies)' (@('test', '--all-projects', '--detection-depth=4') + $sevArgs)
 }
@@ -103,11 +122,7 @@ if ($Scan -in @('code', 'all')) {
 if ($Scan -in @('iac', 'all')) {
     Invoke-Scan 'IaC' (@('iac', 'test', $Target) + $sevArgs)
 }
-if ($Scan -eq 'container') {
-    if (-not $Image) { Write-Output 'ERROR: container scan requires -Image <image:tag>'; exit 2 }
-    Invoke-Scan 'Container' (@('container', 'test', $Image) + $sevArgs)
-}
-elseif ($Scan -eq 'all' -and $Image) {
+if ($Scan -eq 'all' -and $Image) {
     Invoke-Scan 'Container' (@('container', 'test', $Image) + $sevArgs)
 }
 elseif ($Scan -eq 'all') {

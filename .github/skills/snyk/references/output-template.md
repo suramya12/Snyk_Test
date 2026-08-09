@@ -13,9 +13,12 @@ Always report results in this exact structure. Fill every section. Never skip
 | SCA (dependencies) | node-api/package.json | 1 | 4 | 3 | 2 | Issues found |
 | Code (SAST) | workspace | 0 | 6 | 9 | 5 | Issues found |
 | IaC | iac/ | 0 | 2 | 4 | 0 | Issues found |
+| Container | node:10 (from Dockerfile.node) | 26 | 130 | 135 | 536 | Issues found |
 ```
 
-Include a row for every scan attempted. If a scan was skipped or failed, put the reason in
+Include a row for every scan attempted — including the Container row when it was skipped
+(`RESULT: Container - skipped (no -Image provided)`). If a scan was skipped or failed, put the
+reason in
 Status (e.g. "Skipped — mvn not installed", "Blocked — org test limit reached").
 
 ## Section 2 — Findings
@@ -39,6 +42,9 @@ Rules:
   "…plus 7 more Medium/Low issues (see snyk output / --json-file-output for full list)."
 - Always include the fix line when Snyk provides one ("Upgrade X to Y", "Fixed in Z").
 - Mark findings with no available fix as "No fix available yet — monitor".
+- If any findings are suppressed via `snyk ignore` / a `.snyk` policy file, add a final line:
+  "N finding(s) suppressed by policy (.snyk): <issue-id> — <reason> (expires <date>)" —
+  suppressions must stay visible in every report.
 
 ## Section 3 — Recommended Next Actions (REQUIRED)
 

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # One-shot Snyk preflight + scan (macOS/Linux).
-# Usage: snyk-scan.sh <all|sca|code|iac|container> [target-path] [image:tag] [severity] [org-id]
+# Usage: snyk-scan.sh <all|sca|code|iac|container> [target-path] [image:tag] [severity] [org-id] [dockerfile]
+#   dockerfile: for container scans, extract the base image from its FROM line and scan
+#   with base-image remediation advice (image:tag takes precedence if both are given).
 # Exit codes: 0 = clean, 1 = issues found (scan SUCCEEDED), 2 = setup/scan error
 set -u
-SCAN="${1:-all}"; TARGET="${2:-.}"; IMAGE="${3:-}"; SEV="${4:-}"; ORG="${5:-}"
+SCAN="${1:-all}"; TARGET="${2:-.}"; IMAGE="${3:-}"; SEV="${4:-}"; ORG="${5:-}"; DOCKERFILE="${6:-}"
 FINDINGS=0
 SEV_ARG=""
 [ -n "$SEV" ] && SEV_ARG="--severity-threshold=$SEV"
@@ -89,8 +91,19 @@ if [ "$SCAN" = "iac" ] || [ "$SCAN" = "all" ]; then
     run_scan "IaC" iac test "$TARGET" $SEV_ARG
 fi
 if [ "$SCAN" = "container" ]; then
-    if [ -z "$IMAGE" ]; then echo "ERROR: container scan requires an image:tag argument"; exit 2; fi
-    run_scan "Container" container test "$IMAGE" $SEV_ARG
+    if [ -z "$IMAGE" ] && [ -n "$DOCKERFILE" ]; then
+        if [ ! -f "$DOCKERFILE" ]; then echo "ERROR: Dockerfile not found: $DOCKERFILE"; exit 2; fi
+        # Last FROM = final stage = the shipped image (multi-stage builds)
+        IMAGE="$(grep -iE '^\s*FROM[[:space:]]+[^[:space:]]+' "$DOCKERFILE" | tail -n1 | sed -E 's/^\s*FROM[[:space:]]+([^[:space:]]+).*/\1/i')"
+        if [ -n "$IMAGE" ]; then echo "Extracted base image from $DOCKERFILE: $IMAGE"
+        else echo "ERROR: no FROM line found in $DOCKERFILE. Pass an image:tag (3rd argument) instead."; exit 2; fi
+    fi
+    if [ -z "$IMAGE" ]; then echo "ERROR: container scan requires an image:tag (3rd arg) or a dockerfile (6th arg)"; exit 2; fi
+    if [ -n "$DOCKERFILE" ]; then
+        run_scan "Container" container test "$IMAGE" --file="$DOCKERFILE" $SEV_ARG
+    else
+        run_scan "Container" container test "$IMAGE" $SEV_ARG
+    fi
 elif [ "$SCAN" = "all" ] && [ -n "$IMAGE" ]; then
     run_scan "Container" container test "$IMAGE" $SEV_ARG
 elif [ "$SCAN" = "all" ]; then

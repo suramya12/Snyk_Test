@@ -34,7 +34,10 @@ will ask for it only if a scan needs it.
 - "Run a secret scan"
 - "IaC scan the terraform folder"
 - "Container scan node:18-alpine"
-- "Is upgrading express to v5 safe?" (breakability assessment)
+- "Container scan Dockerfile.node" (the script extracts the FROM image and includes
+  base-image upgrade advice)
+- "Is upgrading express to v5 safe?" (breakability assessment — evidence-based, optionally
+  test-verified in an isolated git worktree)
 - "Fix the vulnerabilities you found"
 
 ## What's inside
