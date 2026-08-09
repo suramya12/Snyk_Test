@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  node-api:
+    image: snyk-test-node:local
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    ports:
+      - "3000:3000"
+  python-service:
+    image: snyk-test-python:local
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    ports:
+      - "5000:5000"

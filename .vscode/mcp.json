@@ -1,0 +1,22 @@
+{
+  "servers": {
+    "snyk": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "--yes",
+        "snyk",
+        "mcp",
+        "-t",
+        "stdio",
+        "--profile",
+        "experimental"
+      ],
+      "env": {
+        "MAVEN_HOME": "${env:LOCALAPPDATA}\\Programs\\Apache\\Maven\\apache-maven-3.9.16",
+        "PATH": "${workspaceFolder}\\python-service\\.venv\\Scripts;${env:LOCALAPPDATA}\\Programs\\Apache\\Maven\\apache-maven-3.9.16\\bin;${env:PATH}"
+      },
+      "cwd": "${workspaceFolder}"
+    }
+  }
+}
