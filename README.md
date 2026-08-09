@@ -190,3 +190,22 @@ results without merging similar findings until after collection.
 
 Compare coverage by issue ID and source location, not only totals. The extension and
 MCP may group or format the same underlying Snyk result differently.
+
+## Snyk commands
+
+```bash
+snyk auth
+snyk code test
+snyk iac test iac/
+# SCA by ecosystem
+snyk test --file=node-api/package.json --package-manager=npm
+snyk test --file=python-service/requirements.txt --package-manager=pip
+snyk test --file=java-app/pom.xml --package-manager=maven
+# Container / Dockerfile
+snyk container test Dockerfile.node
+snyk container test Dockerfile.python
+```
+
+## Legal / Safety
+
+This is for educational scanning only. Do not expose to the internet, do not deploy to production, and do not use these patterns in real software.
