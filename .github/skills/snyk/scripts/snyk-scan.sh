@@ -14,7 +14,8 @@ section() { printf '\n===== %s =====\n' "$1"; }
 if ! command -v snyk >/dev/null 2>&1; then
     if command -v npm >/dev/null 2>&1; then
         section "Installing Snyk CLI via npm"
-        npm install -g snyk >/dev/null 2>&1
+        INSTALL_LOG="${TMPDIR:-/tmp}/snyk-npm-install.log"
+        npm install -g snyk >"$INSTALL_LOG" 2>&1 || echo "npm install failed - log: $INSTALL_LOG"
     fi
     if ! command -v snyk >/dev/null 2>&1; then
         echo "ERROR: Snyk CLI not found and could not be installed automatically."
@@ -24,15 +25,19 @@ if ! command -v snyk >/dev/null 2>&1; then
     fi
 fi
 
-# --- 2. Best-effort update to latest ---
+# --- 2. Best-effort update to latest (throttled: network check at most once per day) ---
 INSTALLED="$(snyk --version 2>/dev/null | head -n1)"
-if command -v npm >/dev/null 2>&1; then
+STAMP="${TMPDIR:-/tmp}/snyk-cli-update-check"
+TODAY="$(date +%Y%m%d)"
+if command -v npm >/dev/null 2>&1 && [ "$(cat "$STAMP" 2>/dev/null)" != "$TODAY" ]; then
     LATEST="$(npm view snyk version 2>/dev/null || true)"
     if [ -n "$LATEST" ] && [ "$INSTALLED" != "$LATEST" ]; then
         echo "Updating Snyk CLI $INSTALLED -> $LATEST"
-        npm install -g snyk@latest >/dev/null 2>&1
+        UPDATE_LOG="${TMPDIR:-/tmp}/snyk-npm-update.log"
+        npm install -g snyk@latest >"$UPDATE_LOG" 2>&1 || echo "WARN: update failed (continuing with $INSTALLED) - log: $UPDATE_LOG"
         INSTALLED="$(snyk --version 2>/dev/null | head -n1)"
     fi
+    echo "$TODAY" > "$STAMP"
 fi
 echo "Snyk CLI version: $INSTALLED"
 
@@ -63,8 +68,9 @@ fi
 run_scan() {
     local name="$1"; shift
     section "$name"
-    # shellcheck disable=SC2068
-    snyk $@ 2>&1 | grep -vE 'analysis for'
+    # 'analysis for' matches the Snyk Code progress spinner; intentionally minimal filter -
+    # extend the pattern only if other scan types add progress chatter
+    snyk "$@" 2>&1 | grep -vE 'analysis for'
     local rc=${PIPESTATUS[0]}
     case $rc in
         0) echo "RESULT: $name - no issues found." ;;
@@ -87,6 +93,9 @@ if [ "$SCAN" = "container" ]; then
     run_scan "Container" container test "$IMAGE" $SEV_ARG
 elif [ "$SCAN" = "all" ] && [ -n "$IMAGE" ]; then
     run_scan "Container" container test "$IMAGE" $SEV_ARG
+elif [ "$SCAN" = "all" ]; then
+    echo ""
+    echo "RESULT: Container - skipped (no image provided; pass image:tag as 3rd argument to include it)."
 fi
 
 exit $FINDINGS

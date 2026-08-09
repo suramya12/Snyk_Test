@@ -23,27 +23,34 @@ function Write-Section([string]$t) { Write-Output ''; Write-Output "===== $t ===
 
 # --- 1. Ensure CLI installed ---
 if (-not (Get-Command snyk -ErrorAction SilentlyContinue)) {
+    $installLog = Join-Path $env:TEMP 'snyk-npm-install.log'
     if (Get-Command npm -ErrorAction SilentlyContinue) {
         Write-Section 'Installing Snyk CLI via npm'
-        npm install -g snyk *> $null
+        npm install -g snyk *> $installLog
     }
     if (-not (Get-Command snyk -ErrorAction SilentlyContinue)) {
         Write-Output 'ERROR: Snyk CLI not found and could not be installed automatically.'
+        if (Test-Path $installLog) { Write-Output "npm install log: $installLog" }
         Write-Output 'Install Node.js (https://nodejs.org) and re-run, or install the CLI manually:'
         Write-Output 'https://docs.snyk.io/snyk-cli/install-or-update-the-snyk-cli'
         exit 2
     }
 }
 
-# --- 2. Best-effort update to latest ---
+# --- 2. Best-effort update to latest (throttled: network check at most once per day) ---
 $installed = (& snyk --version 2>$null | Select-Object -First 1)
-if (Get-Command npm -ErrorAction SilentlyContinue) {
+$stamp = Join-Path $env:TEMP 'snyk-cli-update-check.txt'
+$today = Get-Date -Format 'yyyyMMdd'
+if ((Get-Command npm -ErrorAction SilentlyContinue) -and ((Get-Content $stamp -ErrorAction SilentlyContinue) -ne $today)) {
     $latest = (npm view snyk version 2>$null)
     if ($latest -and $installed -and ("$installed".Trim() -ne "$latest".Trim())) {
         Write-Output "Updating Snyk CLI $installed -> $latest"
-        npm install -g snyk@latest *> $null
+        $updateLog = Join-Path $env:TEMP 'snyk-npm-update.log'
+        npm install -g snyk@latest *> $updateLog
+        if ($LASTEXITCODE -ne 0) { Write-Output "WARN: update failed (continuing with $installed) - log: $updateLog" }
         $installed = (& snyk --version 2>$null | Select-Object -First 1)
     }
+    Set-Content -Path $stamp -Value $today
 }
 Write-Output "Snyk CLI version: $installed"
 
@@ -77,6 +84,8 @@ else {
 # --- 4. Run scans (spinner/progress noise stripped to keep output compact) ---
 function Invoke-Scan([string]$name, [string[]]$snykArgs) {
     Write-Section $name
+    # 'analysis for' matches the Snyk Code progress spinner; intentionally minimal filter -
+    # extend the pattern only if other scan types add progress chatter
     & snyk @snykArgs 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch 'analysis for' }
     switch ($LASTEXITCODE) {
         0 { Write-Output "RESULT: $name - no issues found." }
@@ -100,6 +109,10 @@ if ($Scan -eq 'container') {
 }
 elseif ($Scan -eq 'all' -and $Image) {
     Invoke-Scan 'Container' (@('container', 'test', $Image) + $sevArgs)
+}
+elseif ($Scan -eq 'all') {
+    Write-Output ''
+    Write-Output 'RESULT: Container - skipped (no -Image provided; pass -Image <image:tag> to include it).'
 }
 
 if ($script:Findings) { exit 1 } else { exit 0 }

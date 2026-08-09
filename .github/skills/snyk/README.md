@@ -12,9 +12,9 @@ Unzip so you get a `snyk` folder in one of:
 
 | Location | Scope |
 |---|---|
-| `<repo>/.github/skills/snyk/` | This repository (recommended for teams) |
-| `<repo>/.claude/skills/snyk/` | This repository (Claude Code) |
-| `~/.copilot/skills/snyk/` | Personal — all repositories |
+| `<repo>/.github/skills/snyk/` | This repository (recommended for teams; verified) |
+| `<repo>/.claude/skills/snyk/` | This repository — Claude Code (per documented skill locations) |
+| `~/.copilot/skills/snyk/` | Personal — all repositories (per documented skill locations) |
 
 No other setup. The skill installs/updates the Snyk CLI itself (Node.js/npm needed for
 auto-install) and walks you through browser login on first use. If your Snyk account belongs

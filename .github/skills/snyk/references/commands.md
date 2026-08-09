@@ -7,7 +7,7 @@ command from SKILL.md is not enough.
 
 ```
 snyk test --all-projects                     # scan every manifest found (recommended default)
-snyk test --all-projects --detection-depth=4 # search deeper folder trees
+snyk test --all-projects --detection-depth=4 # manifests up to 4 folders deep (covers typical monorepo nesting; raise for deeper trees)
 snyk test --file=package.json                # scan one specific manifest
 snyk test --file=pom.xml --package-manager=maven
 snyk test --file=requirements.txt --package-manager=pip
@@ -88,9 +88,21 @@ snyk aibom --experimental --html-file-output=aibom.html
 
 ## Package health (MCP `snyk_package_health_check` equivalent)
 
-- npm package: `snyk test lodash@4.17.15` (tests a single public npm package).
-- Other ecosystems: no direct CLI equivalent — point the user to https://snyk.io/advisor/
-  for health scores (maintenance, popularity, security).
+- Vulnerabilities (npm only): `snyk test lodash@4.17.15` (tests a single public npm package).
+- Health score (broad ecosystem coverage): fetch the Snyk Advisor page and extract the health
+  score plus maintenance, popularity, security, and community signals — the same data the MCP
+  tool returns:
+
+| Ecosystem | URL pattern |
+|---|---|
+| npm | `https://snyk.io/advisor/npm-package/<package>` |
+| Python | `https://snyk.io/advisor/python/<package>` |
+| Go | `https://snyk.io/advisor/golang/<module-path>` |
+| Docker | `https://snyk.io/advisor/docker/<image>` |
+
+State one caveat: the data is read from the Advisor web page, not Snyk's structured API.
+Ecosystems not on Advisor (e.g. Maven, NuGet): search the vuln DB at https://security.snyk.io
+and report vulnerability history plus latest-release recency instead.
 
 ## Auth details
 
@@ -119,11 +131,30 @@ The org ID is a UUID found at https://app.snyk.io → org Settings → Organizat
 The one-shot scripts accept it via `-Org <id>` (ps1) / 5th positional arg (sh) and export
 `SNYK_CFG_ORG`, which every snyk command honors.
 
+## Ignores & the .snyk policy file
+
+```
+snyk ignore --id=<ISSUE-ID> --reason="false positive: input validated upstream" --expiry=2026-12-31
+```
+
+- Always set `--reason` AND `--expiry`; never ignore silently or indefinitely.
+- The command writes to a `.snyk` policy file in the project root. Committing it is preferred
+  for teams: the ignore then travels with the repo and applies in CI and for every developer.
+- Uncommitted ignores live only on the machine where they were created.
+
+## CI integration
+
+- Add `SNYK_TOKEN` (a service-account API token) as a pipeline secret.
+- Gate command: `snyk test --all-projects --severity-threshold=high --fail-on=upgradable`
+  (fails the build only on high/critical issues that have an available fix).
+- On the main branch also run `snyk monitor --all-projects` for continuous alerting.
+
 ## Troubleshooting (exit code 2)
 
 | Error text contains | Cause | Action |
 |---|---|---|
 | `Authentication error` / `Unauthorized` | Not logged in / token expired | Re-run Step 2 (`snyk auth`) |
+| `whoami` succeeds but scans return 401/Unauthorized | Stored token stale or revoked | Re-run `snyk auth`, then retry the scan |
 | `test limit` / `monthly limit` | Org quota exhausted for private tests | Report it; continue other scan types; user can wait for reset or upgrade plan |
 | `Could not detect supported target files` | No manifests found (exit 3) | List what Snyk supports; check you're in the right folder |
 | `mvn command not found` / build errors | Ecosystem toolchain missing | Report skipped project; suggest installing the tool |

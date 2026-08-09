@@ -8,6 +8,7 @@ short list of the fixes you intend to apply and get one approval for the batch.
 1. **Dependency upgrades (SCA)** — highest leverage, lowest risk.
 2. **Code fixes (SAST)** — Critical/High first.
 3. **IaC fixes** — apply the `Resolve:` line the scan printed for each issue.
+4. **Container fixes** — update the base image per Snyk's recommendation.
 
 ## 1. Dependency upgrades
 
@@ -16,12 +17,16 @@ than Snyk recommends without asking.
 
 | Ecosystem | How to apply |
 |---|---|
-| npm | Edit the version in `package.json`, then run `npm install` in that folder |
+| npm | `npm install <pkg>@<version>` in that folder — updates `package.json` AND the lockfile together (preferred over manual edits, which risk a stale lockfile) |
+| yarn | `yarn add <pkg>@<version>` |
+| pnpm | `pnpm add <pkg>@<version>` |
 | Maven | Edit the `<version>` element in `pom.xml` |
 | pip | Bump the pin in `requirements.txt` |
 
 After edits, verify the project still resolves/builds (`npm install` exits 0; `mvn -q compile`
-if Maven is installed). If a major-version upgrade is required (e.g. ejs 2.x → 3.x), warn the
+if Maven is installed). For JS projects also confirm the lockfile changed alongside the manifest
+(`git diff --name-only` shows both) — a stale lockfile makes the fix invisible to Snyk and CI.
+If a major-version upgrade is required (e.g. ejs 2.x → 3.x), warn the
 user it may contain breaking changes before applying.
 
 ## 2. Code fixes — pattern table
@@ -41,16 +46,28 @@ Fix only what the finding requires; preserve existing behavior.
 | X-Powered-By exposure | `app.disable('x-powered-by')` or add Helmet |
 | Debug mode enabled | `debug=False` / remove debug flag for production entrypoints |
 | Cleartext HTTP | Use `https` module / TLS endpoints |
+| Path Traversal | Resolve the path and verify it stays inside the intended base directory before use |
+| SSRF | Allowlist target hosts/schemes; block private/internal IP ranges; never fetch raw user-supplied URLs |
+| XXE | Disable DTDs/external entities on the XML parser (`disallow-doctype-decl`, `FEATURE_SECURE_PROCESSING`) |
+| Open Redirect | Allowlist redirect targets, or permit only relative paths |
+| Log injection / JNDI (log4shell-style) | Upgrade the logging library; sanitize untrusted data before logging; disable JNDI lookups |
 
 ## 3. IaC fixes
 
 The scan output contains a `Resolve:` line per finding — apply it literally
 (e.g. set `acl = "private"`, restrict `cidr_blocks` to a specific range, enable versioning).
 
-## 4. Verify loop (required — do not skip)
+## 4. Container fixes
+
+Snyk container output recommends alternative base images ("Base image upgrade" guidance).
+Update the `FROM` tag in the Dockerfile to the recommended image, rebuild
+(`docker build -t <image:tag> .`), then rescan with `-Scan container -Image <image:tag>` only.
+
+## 5. Verify loop (required — do not skip)
 
 1. Rescan ONLY the affected scan types via the one-shot script:
-   dependencies changed → `-Scan sca` · source changed → `-Scan code` · IaC changed → `-Scan iac`.
+   dependencies changed → `-Scan sca` · source changed → `-Scan code` · IaC changed → `-Scan iac`
+   · Dockerfile/image changed → `-Scan container -Image <image:tag>`.
 2. Confirm each fixed issue is gone AND no new issues were introduced.
 3. If fixable issues remain, fix and rescan again. **Maximum 3 rounds** — then stop and report
    what remains and why (no fix available, needs major upgrade, needs human decision).
