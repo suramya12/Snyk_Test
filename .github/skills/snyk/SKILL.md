@@ -56,13 +56,15 @@ Run the script from the **workspace root** so scans cover the whole project.
 The script automatically: installs the CLI via npm if missing → updates to latest (checked at
 most once per day) → checks auth (if a browser opens, tell the user to complete the login; the
 script waits) → runs the scans with progress-spinner noise stripped → prints one `RESULT:` line
-per scan. `-Scan all` without `-Image` prints `RESULT: Container - skipped` — if Dockerfiles
-exist in the repo, surface a container scan in Recommended Next Actions.
+per scan. `-Scan all` auto-discovers `Dockerfile*` files outside common build/vendor folders and
+scans the final base image from each one. `FROM --platform=...` and default `ARG` values are
+supported. If an image variable cannot be resolved, pass `-Image <image:tag>` explicitly.
 
 **Exit codes — critical:** `0` = clean, `1` = **issues found, scan SUCCEEDED** (summarize the
 findings — this is not an error), `2` = setup/scan error (read the ERROR lines; troubleshooting
-table in [references/commands.md](./references/commands.md)), `3` = no supported manifests found
-(verify the working directory and `-Target` path).
+table in [references/commands.md](./references/commands.md)), `3` = no supported targets found
+(verify the working directory and `-Target` path). For multi-scan runs, error/incomplete coverage
+takes precedence over findings so CI cannot report a false success.
 
 **When a scan fails or a project is skipped — never relay the raw error.** Diagnose it with the
 failure table in [references/commands.md](./references/commands.md) and give the developer 2–3
@@ -111,9 +113,9 @@ output so the filtering is deterministic (rule IDs are stable; display titles ar
    file contains code snippets around each finding and must never be committed. Reuse a SARIF
    already produced in this conversation if one exists.
 2. Extract secret findings with ONE filtered command — never read or print the whole file:
-   - PowerShell: `(Get-Content <sarif> -Raw | ConvertFrom-Json).runs[0].results | Where-Object { $_.ruleId -match 'Hardcoded|Cleartext' } | ForEach-Object { "$($_.level) $($_.ruleId) $($_.locations[0].physicalLocation.artifactLocation.uri):$($_.locations[0].physicalLocation.region.startLine)" }`
-   - bash (jq): `jq -r '.runs[0].results[] | select(.ruleId|test("Hardcoded|Cleartext")) | "\(.level) \(.ruleId) \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' <sarif>`
-   - bash without jq (grep/sed fallback): `grep -o '"ruleId":"[^"]*"' <sarif> | grep -iE 'Hardcoded|Cleartext' | sort -u`
+   - PowerShell: `(Get-Content <sarif> -Raw | ConvertFrom-Json).runs | ForEach-Object { $_.results } | Where-Object { $_.ruleId -match 'Hardcoded' } | ForEach-Object { "$($_.level) $($_.ruleId) $($_.locations[0].physicalLocation.artifactLocation.uri):$($_.locations[0].physicalLocation.region.startLine)" }`
+   - bash (jq): `jq -r '.runs[].results[] | select(.ruleId|test("Hardcoded"; "i")) | "\(.level) \(.ruleId) \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine)"' <sarif>`
+   - bash without jq (grep/sed fallback): `grep -o '"ruleId":"[^"]*"' <sarif> | grep -i 'Hardcoded' | sort -u`
      (rule IDs only — report them plus the total count; for file:line detail use a targeted grep
      around each matched ruleId, still never dumping the whole file.)
 3. Report under the heading **"Secret Scan Results (via Snyk Code secrets detection)"** —
@@ -134,10 +136,10 @@ Assess "will upgrading <pkg> from A to B break my app" with evidence, step by st
 3. **Workspace impact** — search this repo for each changed/removed API. Zero usages →
    downgrade the risk one level; cite the searches as evidence.
 4. **Dry run (only with user approval)** — never modify the user's working tree. Use an
-   isolated git worktree: `git worktree add <temp-dir>\snyk-break HEAD` → apply the upgrade
-   THERE → run the project's build and tests → report the result → ALWAYS clean up, even on
-   failure: `git worktree remove --force <temp-dir>\snyk-break` (wrap cleanup so a failed build
-   cannot skip it). Green = Low residual risk; failures = the concrete break list.
+   isolated git worktree (`$env:TEMP\snyk-break` on PowerShell or
+   `${TMPDIR:-/tmp}/snyk-break` on bash) → apply the upgrade THERE → run the project's build and
+   tests → report the result → ALWAYS remove that worktree, even on failure (wrap cleanup so a
+   failed build cannot skip it). Green = Low residual risk; failures = the concrete break list.
    If the project is not a git repo: copy the project dir to temp and work there instead.
 5. **Verdict** — Low/Medium/High with one line of evidence per step.
 
@@ -148,14 +150,16 @@ free-form bullet summaries are NOT acceptable. All three sections, every time:
 
 1. **Scan Summary table** — one row per scan (including skipped/failed with the reason),
    with Critical/High/Medium/Low counts per row. No counts = non-compliant report.
+   Use the scanner's complete summary or structured output as the source of truth. Never count
+   severity strings in a truncated terminal buffer or infer missing values. Follow the count
+   procedure in [references/output-template.md](./references/output-template.md).
 2. **Findings** grouped by severity, Critical first: title/CVE, package or file:line, and the fix
    Snyk reported ("Upgrade X to Y"). Max ~10 detailed findings per scan; roll the rest up as counts.
 3. **Recommended Next Actions** — REQUIRED, never omit. Use the recommendation rules in the
    template: severity first, cluster by ecosystem/file, highest-leverage single upgrades,
    missing scan types, missing toolchain coverage, monitoring.
-   - If the summary shows "Container - skipped" AND any Dockerfile exists in the repo, the FIRST
-     next action must be: run `-Scan container -Dockerfile <path>` per Dockerfile (no image name
-     needed). Offer to run it immediately.
+    - If a container scan was skipped because no concrete base image could be resolved, the FIRST
+       next action must be: rerun with `-Scan container -Image <image:tag> -Dockerfile <path>`.
 
 ## Step 4 — Offer and perform remediation (MCP parity)
 
@@ -182,6 +186,8 @@ If the user disputes a finding or wants to suppress it:
 ## Known limitations vs the Snyk MCP server (disclose when relevant)
 
 - **Secret scan** covers the working tree only — no git history (the MCP secret scan has the same limitation).
+- **Dockerfile-only container scans** analyze the final base image and provide base-image advice;
+   build and scan the application image when application-layer coverage is required.
 - **Breakability check** is evidence-based (semver/changelog/dry-run on THIS repo) rather than backed by Snyk's API dataset.
 - **Package health** metrics are read from the Snyk Advisor web page, not the structured API.
 - **Org test limits** apply to CLI the same as MCP; quota errors are reported, not fatal — continue other scans.

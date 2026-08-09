@@ -138,6 +138,9 @@ The org ID is a UUID found at https://app.snyk.io → org Settings → Organizat
 The one-shot scripts accept it via `-Org <id>` (ps1) / 5th positional arg (sh) and export
 `SNYK_CFG_ORG`, which every snyk command honors.
 
+If no org is supplied or configured, the scripts use the account default. For repeatable team
+and CI scans, always pass the UUID explicitly so results and quota usage land in the intended org.
+
 ## Ignores & the .snyk policy file
 
 ```
@@ -156,7 +159,7 @@ snyk ignore --id=<ISSUE-ID> --reason="false positive: input validated upstream" 
   (fails the build only on high/critical issues that have an available fix).
 - On the main branch also run `snyk monitor --all-projects` for continuous alerting.
 
-## Troubleshooting (exit code 2)
+## Troubleshooting (exit codes 2 and 3)
 
 | Error text contains | Cause | Action |
 |---|---|---|

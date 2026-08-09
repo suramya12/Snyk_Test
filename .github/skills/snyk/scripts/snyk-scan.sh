@@ -3,12 +3,24 @@
 # Usage: snyk-scan.sh <all|sca|code|iac|container> [target-path] [image:tag] [severity] [org-id] [dockerfile]
 #   dockerfile: for container scans, extract the base image from its FROM line and scan
 #   with base-image remediation advice (image:tag takes precedence if both are given).
-# Exit codes: 0 = clean, 1 = issues found (scan SUCCEEDED), 2 = setup/scan error
+# Exit codes: 0 = clean, 1 = issues found (scan SUCCEEDED), 2 = setup/scan error,
+#             3 = no supported targets found
 set -u
 SCAN="${1:-all}"; TARGET="${2:-.}"; IMAGE="${3:-}"; SEV="${4:-}"; ORG="${5:-}"; DOCKERFILE="${6:-}"
 FINDINGS=0
+SCAN_ERROR=0
+NO_PROJECTS=0
 SEV_ARG=""
 [ -n "$SEV" ] && SEV_ARG="--severity-threshold=$SEV"
+
+case "$SCAN" in
+    all|sca|code|iac|container) ;;
+    *) echo "ERROR: invalid scan type '$SCAN'. Expected all, sca, code, iac, or container."; exit 2 ;;
+esac
+case "$SEV" in
+    ''|low|medium|high|critical) ;;
+    *) echo "ERROR: invalid severity '$SEV'. Expected low, medium, high, or critical."; exit 2 ;;
+esac
 
 section() { printf '\n===== %s =====\n' "$1"; }
 
@@ -77,8 +89,49 @@ run_scan() {
     case $rc in
         0) echo "RESULT: $name - no issues found." ;;
         1) echo "RESULT: $name - issues found (scan succeeded)."; FINDINGS=1 ;;
-        *) echo "RESULT: $name - error (exit $rc). See output above." ;;
+        3) echo "RESULT: $name - skipped (no supported targets found)."; NO_PROJECTS=1 ;;
+        *) echo "RESULT: $name - error (exit $rc). See output above."; SCAN_ERROR=1 ;;
     esac
+}
+
+overall_exit() {
+    if [ "$SCAN_ERROR" -ne 0 ]; then return 2; fi
+    if [ "$NO_PROJECTS" -ne 0 ]; then return 3; fi
+    return "$FINDINGS"
+}
+
+dockerfile_base_image() {
+    awk '
+        toupper($1) == "ARG" && index($2, "=") > 0 {
+            name = substr($2, 1, index($2, "=") - 1)
+            args[name] = substr($2, index($2, "=") + 1)
+        }
+        toupper($1) == "FROM" {
+            for (i = 2; i <= NF; i++) {
+                if ($i !~ /^--/) { image = $i; break }
+            }
+        }
+        END {
+            for (name in args) {
+                gsub("\\$\\{" name "\\}", args[name], image)
+                gsub("\\$" name, args[name], image)
+            }
+            if (image != "") print image
+        }
+    ' "$1"
+}
+
+validate_container_input() {
+    local dockerfile_path="$1"
+    local image_name="$2"
+    if [ -n "$dockerfile_path" ] && [ ! -f "$dockerfile_path" ]; then
+        echo "ERROR: Dockerfile not found: $dockerfile_path"
+        return 1
+    fi
+    case "$image_name" in
+        *'$'*) echo "ERROR: Dockerfile base image '$image_name' contains an unresolved ARG. Pass an image:tag (3rd argument)."; return 1 ;;
+    esac
+    return 0
 }
 
 if [ "$SCAN" = "sca" ] || [ "$SCAN" = "all" ]; then
@@ -92,39 +145,50 @@ if [ "$SCAN" = "iac" ] || [ "$SCAN" = "all" ]; then
 fi
 if [ "$SCAN" = "container" ]; then
     if [ -z "$IMAGE" ] && [ -n "$DOCKERFILE" ]; then
-        if [ ! -f "$DOCKERFILE" ]; then echo "ERROR: Dockerfile not found: $DOCKERFILE"; exit 2; fi
-        # Last FROM = final stage = the shipped image (multi-stage builds)
-        IMAGE="$(grep -iE '^\s*FROM[[:space:]]+[^[:space:]]+' "$DOCKERFILE" | tail -n1 | sed -E 's/^\s*FROM[[:space:]]+([^[:space:]]+).*/\1/i')"
+        if ! validate_container_input "$DOCKERFILE" ""; then exit 2; fi
+        IMAGE="$(dockerfile_base_image "$DOCKERFILE")"
         if [ -n "$IMAGE" ]; then echo "Extracted base image from $DOCKERFILE: $IMAGE"
         else echo "ERROR: no FROM line found in $DOCKERFILE. Pass an image:tag (3rd argument) instead."; exit 2; fi
     fi
     if [ -z "$IMAGE" ]; then echo "ERROR: container scan requires an image:tag (3rd arg) or a dockerfile (6th arg)"; exit 2; fi
+    if ! validate_container_input "$DOCKERFILE" "$IMAGE"; then exit 2; fi
     if [ -n "$DOCKERFILE" ]; then
         run_scan "Container" container test "$IMAGE" --file="$DOCKERFILE" $SEV_ARG
     else
         run_scan "Container" container test "$IMAGE" $SEV_ARG
     fi
 elif [ "$SCAN" = "all" ] && [ -n "$IMAGE" ]; then
-    run_scan "Container" container test "$IMAGE" $SEV_ARG
+    if ! validate_container_input "$DOCKERFILE" "$IMAGE"; then exit 2; fi
+    if [ -n "$DOCKERFILE" ]; then
+        run_scan "Container" container test "$IMAGE" --file="$DOCKERFILE" $SEV_ARG
+    else
+        run_scan "Container" container test "$IMAGE" $SEV_ARG
+    fi
 elif [ "$SCAN" = "all" ]; then
     # Auto-discover Dockerfiles so container coverage is never silently skipped.
-    DFS=$(find . -type f -name 'Dockerfile*' \
-        -not -path '*/node_modules/*' -not -path '*/.git/*' \
-        -not -path '*/target/*' -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null)
-    if [ -n "$DFS" ]; then
-        echo "$DFS" | while IFS= read -r df; do
-            img=$(grep -iE '^\s*FROM[[:space:]]+[^[:space:]]+' "$df" | tail -n1 | sed -E 's/^\s*FROM[[:space:]]+([^[:space:]]+).*/\1/i')
-            if [ -z "$img" ]; then echo "RESULT: Container ($(basename "$df")) - skipped (no FROM line found)."; continue; fi
+    FOUND_DOCKERFILE=0
+    while IFS= read -r df; do
+        if [ -n "$df" ]; then
+            FOUND_DOCKERFILE=1
+            img=$(dockerfile_base_image "$df")
+            if [ -z "$img" ]; then echo "RESULT: Container ($(basename "$df")) - skipped (no FROM line found)."; SCAN_ERROR=1; continue; fi
+            case "$img" in
+                *'$'*) echo "RESULT: Container ($(basename "$df")) - skipped (unresolved ARG in base image; pass an image:tag)."; SCAN_ERROR=1; continue ;;
+            esac
             # Resolve to an absolute path: snyk code test can change the CLI's working dir,
             # so a relative --file path breaks later scans in the same run.
             df_abs="$(cd "$(dirname "$df")" && pwd)/$(basename "$df")"
             echo "Auto-discovered $(basename "$df") -> base image $img"
             run_scan "Container ($(basename "$df"))" container test "$img" --file="$df_abs" $SEV_ARG
-        done
-    else
+        fi
+    done < <(find . -type f -name 'Dockerfile*' \
+        -not -path '*/node_modules/*' -not -path '*/.git/*' \
+        -not -path '*/target/*' -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null | sort)
+    if [ "$FOUND_DOCKERFILE" -eq 0 ]; then
         echo ""
         echo "RESULT: Container - skipped (no image provided and no Dockerfile* found)."
     fi
 fi
 
-exit $FINDINGS
+overall_exit
+exit $?

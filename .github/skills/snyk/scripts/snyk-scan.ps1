@@ -7,7 +7,8 @@ Usage:
   powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan container -Image node:18-alpine
   powershell -ExecutionPolicy Bypass -File snyk-scan.ps1 -Scan container -Dockerfile Dockerfile.node
     (extracts the base image from the FROM line and scans it WITH base-image remediation advice)
-Exit codes: 0 = clean, 1 = issues found (scan SUCCEEDED), 2 = setup/scan error
+Exit codes: 0 = clean, 1 = issues found (scan SUCCEEDED), 2 = setup/scan error,
+            3 = no supported targets found
 #>
 param(
     [Parameter(Mandatory = $true)][ValidateSet('all', 'sca', 'code', 'iac', 'container')][string]$Scan,
@@ -17,12 +18,53 @@ param(
     [string]$Org = '',
     [ValidateSet('', 'low', 'medium', 'high', 'critical')][string]$SeverityThreshold = ''
 )
+# Windows PowerShell can surface native stderr as non-terminating ErrorRecord objects.
+# Keep those records in the scan output and decide success from the native exit code.
 $ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 $script:Findings = $false
+$script:ScanError = $false
+$script:NoProjects = $false
 $sevArgs = @(); if ($SeverityThreshold) { $sevArgs = @("--severity-threshold=$SeverityThreshold") }
 
 function Write-Section([string]$t) { Write-Output ''; Write-Output "===== $t =====" }
+
+function Get-OverallExitCode {
+    if ($script:ScanError) { return 2 }
+    if ($script:NoProjects) { return 3 }
+    if ($script:Findings) { return 1 }
+    return 0
+}
+
+function Get-DockerfileBaseImage([string]$path) {
+    $arguments = @{}
+    $image = ''
+    foreach ($line in (Get-Content -Path $path)) {
+        if ($line -match '^\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)=(\S+)\s*(?:#.*)?$') {
+            $arguments[$Matches[1]] = $Matches[2]
+            continue
+        }
+        if ($line -match '^\s*FROM\s+(.+?)\s*(?:#.*)?$') {
+            $image = (($Matches[1] -split '\s+') | Where-Object { $_ -and $_ -notmatch '^--' } | Select-Object -First 1)
+        }
+    }
+    foreach ($name in $arguments.Keys) {
+        $image = $image.Replace(('${' + $name + '}'), $arguments[$name]).Replace(('$' + $name), $arguments[$name])
+    }
+    return $image
+}
+
+function Test-ContainerInput([string]$dockerfilePath, [string]$imageName) {
+    if ($dockerfilePath -and -not (Test-Path -Path $dockerfilePath -PathType Leaf)) {
+        Write-Output "ERROR: Dockerfile not found: $dockerfilePath"
+        return $false
+    }
+    if ($imageName -match '\$') {
+        Write-Output "ERROR: Dockerfile base image '$imageName' contains an unresolved ARG. Pass -Image <image:tag>."
+        return $false
+    }
+    return $true
+}
 
 # --- 1. Ensure CLI installed ---
 if (-not (Get-Command snyk -ErrorAction SilentlyContinue)) {
@@ -90,27 +132,29 @@ function Invoke-Scan([string]$name, [string[]]$snykArgs) {
     # 'analysis for' matches the Snyk Code progress spinner; intentionally minimal filter -
     # extend the pattern only if other scan types add progress chatter
     & snyk @snykArgs 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -notmatch 'analysis for' }
-    switch ($LASTEXITCODE) {
+    $scanExitCode = $LASTEXITCODE
+    switch ($scanExitCode) {
         0 { Write-Output "RESULT: $name - no issues found." }
         1 { Write-Output "RESULT: $name - issues found (scan succeeded)."; $script:Findings = $true }
-        default { Write-Output "RESULT: $name - error (exit $LASTEXITCODE). See output above." }
+        3 { Write-Output "RESULT: $name - skipped (no supported targets found)."; $script:NoProjects = $true }
+        default { Write-Output "RESULT: $name - error (exit $scanExitCode). See output above."; $script:ScanError = $true }
     }
 }
 
 # Container-only runs skip SCA/Code/IaC entirely (mirrors the .sh script's behavior).
 if ($Scan -eq 'container') {
     if (-not $Image -and $Dockerfile) {
-        if (-not (Test-Path $Dockerfile)) { Write-Output "ERROR: Dockerfile not found: $Dockerfile"; exit 2 }
-        # Last FROM = final stage = the shipped image (multi-stage builds)
-        $m = Select-String -Path $Dockerfile -Pattern '^\s*FROM\s+([^\s]+)' | Select-Object -Last 1
-        if ($m) { $Image = $m.Matches[0].Groups[1].Value; Write-Output "Extracted base image from ${Dockerfile}: $Image" }
+        if (-not (Test-ContainerInput $Dockerfile '')) { exit 2 }
+        $Image = Get-DockerfileBaseImage $Dockerfile
+        if ($Image) { Write-Output "Extracted base image from ${Dockerfile}: $Image" }
         else { Write-Output "ERROR: no FROM line found in $Dockerfile. Pass -Image <image:tag> instead."; exit 2 }
     }
     if (-not $Image) { Write-Output 'ERROR: container scan requires -Image <image:tag> or -Dockerfile <path>'; exit 2 }
+    if (-not (Test-ContainerInput $Dockerfile $Image)) { exit 2 }
     $cArgs = @('container', 'test', $Image) + $sevArgs
     if ($Dockerfile) { $cArgs += @("--file=$((Resolve-Path $Dockerfile).Path)") }
     Invoke-Scan 'Container' $cArgs
-    if ($script:Findings) { exit 1 } else { exit 0 }
+    exit (Get-OverallExitCode)
 }
 
 if ($Scan -in @('sca', 'all')) {
@@ -123,17 +167,21 @@ if ($Scan -in @('iac', 'all')) {
     Invoke-Scan 'IaC' (@('iac', 'test', $Target) + $sevArgs)
 }
 if ($Scan -eq 'all' -and $Image) {
-    Invoke-Scan 'Container' (@('container', 'test', $Image) + $sevArgs)
+    if (-not (Test-ContainerInput $Dockerfile $Image)) { exit 2 }
+    $cArgs = @('container', 'test', $Image) + $sevArgs
+    if ($Dockerfile) { $cArgs += @("--file=$((Resolve-Path $Dockerfile).Path)") }
+    Invoke-Scan 'Container' $cArgs
 }
 elseif ($Scan -eq 'all') {
     # Auto-discover Dockerfiles so container coverage is never silently skipped.
     $dockerfiles = Get-ChildItem -Recurse -Filter 'Dockerfile*' -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '\\(node_modules|\.git|target|dist|build)\\' }
+        Where-Object { $_.FullName -inotmatch '\\(node_modules|\.git|target|dist|build)\\' } |
+        Sort-Object FullName
     if ($dockerfiles) {
         foreach ($df in $dockerfiles) {
-            $m = Select-String -Path $df.FullName -Pattern '^\s*FROM\s+([^\s]+)' | Select-Object -Last 1
-            if (-not $m) { Write-Output "RESULT: Container ($($df.Name)) - skipped (no FROM line found)."; continue }
-            $img = $m.Matches[0].Groups[1].Value
+            $img = Get-DockerfileBaseImage $df.FullName
+            if (-not $img) { Write-Output "RESULT: Container ($($df.Name)) - skipped (no FROM line found)."; $script:ScanError = $true; continue }
+            if ($img -match '\$') { Write-Output "RESULT: Container ($($df.Name)) - skipped (unresolved ARG in base image; pass -Image)."; $script:ScanError = $true; continue }
             # Resolve to an absolute path: snyk code test can change the CLI's working dir,
             # so a relative --file path breaks later scans in the same run.
             $dfAbs = (Resolve-Path $df.FullName).Path
@@ -147,4 +195,4 @@ elseif ($Scan -eq 'all') {
     }
 }
 
-if ($script:Findings) { exit 1 } else { exit 0 }
+exit (Get-OverallExitCode)

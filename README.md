@@ -202,8 +202,8 @@ snyk test --file=node-api/package.json --package-manager=npm
 snyk test --file=python-service/requirements.txt --package-manager=pip
 snyk test --file=java-app/pom.xml --package-manager=maven
 # Container / Dockerfile
-snyk container test Dockerfile.node
-snyk container test Dockerfile.python
+snyk container test node:10 --file=Dockerfile.node
+snyk container test python:3.7-slim --file=Dockerfile.python
 ```
 
 ## Legal / Safety

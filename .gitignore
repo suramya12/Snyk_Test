@@ -13,3 +13,4 @@ java-app/target
 
 # Build artifacts
 snyk-skill.zip
+/dist/

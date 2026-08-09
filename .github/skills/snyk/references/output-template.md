@@ -17,9 +17,22 @@ Always report results in this exact structure. Fill every section. Never skip
 ```
 
 Include a row for every scan attempted — including the Container row when it was skipped
-(`RESULT: Container - skipped (no -Image provided)`). If a scan was skipped or failed, put the
-reason in
-Status (e.g. "Skipped — mvn not installed", "Blocked — org test limit reached").
+(`RESULT: Container - skipped (...)`). If a scan was skipped or failed, use `-` for all four
+severity columns and put the reason in Status (for example, "Skipped - unresolved base-image
+ARG" or "Blocked - org test limit reached"). Use one row per concrete target when a product
+reports separate targets, such as each SCA manifest or Dockerfile.
+
+### Count integrity
+
+- **SCA:** use each project's `Tested ... found N issues` block and its complete severity data.
+- **Code:** use `Open issues: N [ N HIGH N MEDIUM N LOW ]`; Critical is `0` unless explicitly
+   reported by Snyk.
+- **IaC:** use `Total issues: N [ N critical, N high, N medium, N low ]`.
+- **Container:** use the complete container result/JSON severity values for that image.
+- If normal output was truncated or lacks a severity breakdown, rerun only that scan with
+   structured output written to a temporary file, parse it, and delete it. Never print raw
+   JSON/SARIF and never count severity words in a clipped terminal buffer.
+- Use `-` only for skipped/blocked/failed scans. A completed scan must have numeric counts.
 
 ## Section 2 — Findings
 
@@ -78,7 +91,7 @@ Example:
 3. Java SCA coverage is missing — mvn is not installed, so java-app/pom.xml was skipped.
    Install Maven and re-run `snyk test --file=java-app/pom.xml` for full coverage.
 4. iac/main.tf has 2 High findings (public S3 bucket, open security group) — fix before deploy.
-5. Dockerfile.node and Dockerfile.python exist but no container scan was run — scan the base
+5. Dockerfile.node and Dockerfile.python exist but no container scan was run - scan the base
    images: `snyk container test node:<tag> --file=Dockerfile.node`.
 6. Enable continuous alerts: `snyk monitor --all-projects`.
 ```

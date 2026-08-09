@@ -60,8 +60,9 @@ The scan output contains a `Resolve:` line per finding — apply it literally
 ## 4. Container fixes
 
 Snyk container output recommends alternative base images ("Base image upgrade" guidance).
-Update the `FROM` tag in the Dockerfile to the recommended image, rebuild
-(`docker build -t <image:tag> .`), then rescan with `-Scan container -Image <image:tag>` only.
+Update the `FROM` tag in the Dockerfile, build the application image with the correct context,
+then rescan that built tag with `-Scan container -Image <image:tag> -Dockerfile <path>`. Scanning
+only the image extracted from a Dockerfile covers the base image, not application layers.
 
 ## 5. Verify loop (required — do not skip)
 
