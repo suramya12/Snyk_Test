@@ -41,8 +41,9 @@ bash "<skill-folder>/scripts/snyk-scan.sh" all
 
 Scan values: `all` | `sca` | `code` | `iac` | `container`.
 If the user just says "scan", use `all`. Optional args: `-Target <path>` (code/iac scope),
-`-Image <image:tag>` (required for container), `-Org <org-id>`, `-SeverityThreshold high`.
-For the .sh script the positional order is: `<scan> [target] [image] [severity] [org-id]`.
+`-Image <image:tag>` (required for container), `-Dockerfile <path>` (container: base image
+extracted automatically), `-Org <org-id>`, `-SeverityThreshold high`.
+For the .sh script the positional order is: `<scan> [target] [image] [severity] [org-id] [dockerfile]`.
 Run the script from the **workspace root** so scans cover the whole project.
 
 **Org ID (right after auth):**
@@ -140,17 +141,21 @@ Assess "will upgrading <pkg> from A to B break my app" with evidence, step by st
    If the project is not a git repo: copy the project dir to temp and work there instead.
 5. **Verdict** — Low/Medium/High with one line of evidence per step.
 
-## Step 3 — Report results (structured)
+## Step 3 — Report results (structured — MANDATORY FORMAT)
 
-Format exactly per [references/output-template.md](./references/output-template.md):
+The report MUST follow [references/output-template.md](./references/output-template.md) EXACTLY —
+free-form bullet summaries are NOT acceptable. All three sections, every time:
 
-1. **Scan Summary** table — one row per scan: type, target, Critical/High/Medium/Low counts, status
-   (include skipped/failed scans with the reason).
+1. **Scan Summary table** — one row per scan (including skipped/failed with the reason),
+   with Critical/High/Medium/Low counts per row. No counts = non-compliant report.
 2. **Findings** grouped by severity, Critical first: title/CVE, package or file:line, and the fix
    Snyk reported ("Upgrade X to Y"). Max ~10 detailed findings per scan; roll the rest up as counts.
 3. **Recommended Next Actions** — REQUIRED, never omit. Use the recommendation rules in the
    template: severity first, cluster by ecosystem/file, highest-leverage single upgrades,
    missing scan types, missing toolchain coverage, monitoring.
+   - If the summary shows "Container - skipped" AND any Dockerfile exists in the repo, the FIRST
+     next action must be: run `-Scan container -Dockerfile <path>` per Dockerfile (no image name
+     needed). Offer to run it immediately.
 
 ## Step 4 — Offer and perform remediation (MCP parity)
 

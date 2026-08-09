@@ -108,7 +108,7 @@ if ($Scan -eq 'container') {
     }
     if (-not $Image) { Write-Output 'ERROR: container scan requires -Image <image:tag> or -Dockerfile <path>'; exit 2 }
     $cArgs = @('container', 'test', $Image) + $sevArgs
-    if ($Dockerfile) { $cArgs += @('--file=' + $Dockerfile) }
+    if ($Dockerfile) { $cArgs += @("--file=$((Resolve-Path $Dockerfile).Path)") }
     Invoke-Scan 'Container' $cArgs
     if ($script:Findings) { exit 1 } else { exit 0 }
 }
@@ -126,8 +126,25 @@ if ($Scan -eq 'all' -and $Image) {
     Invoke-Scan 'Container' (@('container', 'test', $Image) + $sevArgs)
 }
 elseif ($Scan -eq 'all') {
-    Write-Output ''
-    Write-Output 'RESULT: Container - skipped (no -Image provided; pass -Image <image:tag> to include it).'
+    # Auto-discover Dockerfiles so container coverage is never silently skipped.
+    $dockerfiles = Get-ChildItem -Recurse -Filter 'Dockerfile*' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(node_modules|\.git|target|dist|build)\\' }
+    if ($dockerfiles) {
+        foreach ($df in $dockerfiles) {
+            $m = Select-String -Path $df.FullName -Pattern '^\s*FROM\s+([^\s]+)' | Select-Object -Last 1
+            if (-not $m) { Write-Output "RESULT: Container ($($df.Name)) - skipped (no FROM line found)."; continue }
+            $img = $m.Matches[0].Groups[1].Value
+            # Resolve to an absolute path: snyk code test can change the CLI's working dir,
+            # so a relative --file path breaks later scans in the same run.
+            $dfAbs = (Resolve-Path $df.FullName).Path
+            Write-Output "Auto-discovered $($df.Name) -> base image $img"
+            Invoke-Scan "Container ($($df.Name))" (@('container', 'test', $img, "--file=$dfAbs") + $sevArgs)
+        }
+    }
+    else {
+        Write-Output ''
+        Write-Output 'RESULT: Container - skipped (no -Image provided and no Dockerfile* found).'
+    }
 }
 
 if ($script:Findings) { exit 1 } else { exit 0 }

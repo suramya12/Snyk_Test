@@ -107,8 +107,24 @@ if [ "$SCAN" = "container" ]; then
 elif [ "$SCAN" = "all" ] && [ -n "$IMAGE" ]; then
     run_scan "Container" container test "$IMAGE" $SEV_ARG
 elif [ "$SCAN" = "all" ]; then
-    echo ""
-    echo "RESULT: Container - skipped (no image provided; pass image:tag as 3rd argument to include it)."
+    # Auto-discover Dockerfiles so container coverage is never silently skipped.
+    DFS=$(find . -type f -name 'Dockerfile*' \
+        -not -path '*/node_modules/*' -not -path '*/.git/*' \
+        -not -path '*/target/*' -not -path '*/dist/*' -not -path '*/build/*' 2>/dev/null)
+    if [ -n "$DFS" ]; then
+        echo "$DFS" | while IFS= read -r df; do
+            img=$(grep -iE '^\s*FROM[[:space:]]+[^[:space:]]+' "$df" | tail -n1 | sed -E 's/^\s*FROM[[:space:]]+([^[:space:]]+).*/\1/i')
+            if [ -z "$img" ]; then echo "RESULT: Container ($(basename "$df")) - skipped (no FROM line found)."; continue; fi
+            # Resolve to an absolute path: snyk code test can change the CLI's working dir,
+            # so a relative --file path breaks later scans in the same run.
+            df_abs="$(cd "$(dirname "$df")" && pwd)/$(basename "$df")"
+            echo "Auto-discovered $(basename "$df") -> base image $img"
+            run_scan "Container ($(basename "$df"))" container test "$img" --file="$df_abs" $SEV_ARG
+        done
+    else
+        echo ""
+        echo "RESULT: Container - skipped (no image provided and no Dockerfile* found)."
+    fi
 fi
 
 exit $FINDINGS
