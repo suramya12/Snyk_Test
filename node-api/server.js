@@ -1,31 +1,48 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
-const { exec } = require('child_process');
+const { execFile } = require('child_process');
 const crypto = require('crypto');
 
 const app = express();
+app.disable('x-powered-by');
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.urlencoded({ extended: true }));
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests'
+}));
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 const users = [
-  { id: 1, name: 'alice', password: 'secret' },
-  { id: 2, name: 'bob', password: 'hunter2' },
-  { id: 3, name: 'charlie', password: 'p@ssw0rd' }
+  { id: 1, name: 'alice' },
+  { id: 2, name: 'bob' },
+  { id: 3, name: 'charlie' }
 ];
 
 const allowedViewFiles = {
   'index.ejs': path.join(__dirname, 'views', 'index.ejs')
 };
 
-// Index with reflected XSS sink via unsafe EJS
 app.get('/', (req, res) => {
-  const msg = req.query.msg || '<em>Welcome!</em>';
-  res.render('index', { msg }); // index.ejs uses unescaped output
+  const userMsg = typeof req.query.msg === 'string' ? req.query.msg : '<em>Welcome!</em>';
+  const msg = escapeHtml(userMsg);
+  res.render('index', { msg });
 });
 
-// Search is now implemented without SQL string interpolation.
 app.get('/search', (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   const rows = users
@@ -34,7 +51,6 @@ app.get('/search', (req, res) => {
   res.json(rows);
 });
 
-// Path traversal is blocked by only allowing a small, explicit set of view files.
 app.get('/read', (req, res) => {
   const requested = String(req.query.file || 'index.ejs');
   const resolved = allowedViewFiles[requested];
@@ -51,25 +67,34 @@ app.get('/read', (req, res) => {
   }
 });
 
-// Command Injection
 app.get('/ping', (req, res) => {
-  const host = req.query.host || '127.0.0.1';
-  exec('ping -c 1 ' + host, (err, stdout, stderr) => { // vulnerable
-    if (err) return res.status(500).send(stderr);
+  const host = String(req.query.host || '127.0.0.1');
+  const allowedHostPattern = /^(?:localhost|(?:\d{1,3}\.){3}\d{1,3}|[a-zA-Z0-9.-]+)$/;
+
+  if (!allowedHostPattern.test(host)) {
+    return res.status(400).send('Invalid host');
+  }
+
+  execFile('ping', ['-c', '1', host], (err, stdout, stderr) => {
+    if (err) return res.status(500).send(stderr || err.message);
     res.type('text/plain').send(stdout);
   });
 });
 
-// Weak crypto
 app.get('/hash', (req, res) => {
-  const text = req.query.text || 'password';
-  const md5 = crypto.createHash('md5').update(text).digest('hex');
-  res.json({ md5 });
+  const text = String(req.query.text || 'password');
+  const digest = crypto.createHash('sha256').update(text).digest('hex');
+  res.json({ sha256: digest });
 });
 
-// Hardcoded secret usage (for SAST pattern)
-const API_KEY = 'sk_test_hardcoded_please_rotate';
-app.get('/secret', (req, res) => res.json({ apiKey: API_KEY }));
+const API_KEY = process.env.API_KEY;
+app.get('/secret', (req, res) => {
+  if (!API_KEY) {
+    return res.status(500).json({ error: 'API key is not configured' });
+  }
+
+  return res.json({ apiKey: API_KEY });
+});
 
 if (require.main === module) {
   app.listen(3000, () => console.log('Node API listening on 3000'));
