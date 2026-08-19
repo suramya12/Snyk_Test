@@ -1,0 +1,13 @@
+# Core dependencies
+Pillow>=10.0.0
+pillow-avif-plugin>=1.4.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Neural compression (required for --mode neural)
+compressai>=1.2.0
+torch>=2.0.0
+
+# ONNX export/inference (optional, for --onnx-model)
+# onnx>=1.14.0
+# onnxruntime>=1.15.0
