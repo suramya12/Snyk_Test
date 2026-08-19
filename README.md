@@ -7,6 +7,42 @@ the Snyk VS Code extension, Snyk CLI, and Snyk MCP scan coverage and behavior.
 **Do not deploy this project, expose it to a network, or copy these patterns into
 production code. Do not remediate findings in this benchmark branch.**
 
+## Project Overview
+
+This is a multi-stack vulnerability benchmark with four independent targets:
+
+- **node-api** — Express 4.16.1 + EJS 2.5.5 web app with reflected XSS, command
+  injection, weak hashing, and hardcoded secrets.
+- **python-service** — Flask 1.0 service with reflected XSS, SQL injection,
+  unsafe YAML deserialization, and shell injection.
+- **java-app** — Maven project pinned to Log4Shell-era Log4j 2.14.1 and Commons
+  Collections 3.2.1 with unsafe deserialization and trust-all TLS.
+- **iac + containers** — Terraform with open SSH/egress and public S3 ACLs,
+  plus EOL base images (`node:10`, `python:3.7-slim`) built via Docker Compose.
+
+## Repository Structure
+
+```text
+├── docker-compose.yml      # Publishes node-api and python-service on host ports
+├── Dockerfile.node         # EOL Node 10 image, root runtime
+├── Dockerfile.python       # EOL Python 3.7 image, root runtime
+├── iac/main.tf             # Vulnerable Terraform (open ingress/egress, public S3)
+├── java-app/               # Maven project with Log4j 2.14.1 (pom.xml + App.java)
+├── node-api/               # Express app (server.js, package.json, EJS views, tests)
+└── python-service/         # Flask app (app.py, requirements.txt)
+```
+
+## Getting Started
+
+1. Clone the repository and open it in VS Code.
+2. Install Node.js, npm, Maven, and Docker Desktop.
+3. Create the isolated Python 3.8 environment for `python-service` (see the
+   Snyk MCP Setup section for the exact commands).
+4. Authenticate Snyk with `snyk auth`, or complete browser authentication when
+   the Snyk MCP server prompts for it.
+5. Run the CLI baseline scans or the suggested MCP benchmark prompt below, then
+   record results in the Comparison Record table.
+
 No `.snyk` policy file or ignore rules are included. All severities should remain
 visible. Snyk's vulnerability database and detection rules change over time, so
 record the scan date, Snyk version, organization, product, and issue IDs with every
@@ -189,19 +225,16 @@ results without merging similar findings until after collection.
 | | | Snyk MCP | | | | | | |
 
 Compare coverage by issue ID and source location, not only totals. The extension and
-MCP may group or format the same underlying Snyk result differently.
-
-## Snyk commands
+MCP may group or format the same underlying Snyk result differently. For a compact
+check, the essential CLI commands are:
 
 ```bash
 snyk auth
 snyk code test
 snyk iac test iac/
-# SCA by ecosystem
 snyk test --file=node-api/package.json --package-manager=npm
 snyk test --file=python-service/requirements.txt --package-manager=pip
 snyk test --file=java-app/pom.xml --package-manager=maven
-# Container / Dockerfile
 snyk container test node:10 --file=Dockerfile.node
 snyk container test python:3.7-slim --file=Dockerfile.python
 ```
